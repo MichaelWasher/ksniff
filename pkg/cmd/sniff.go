@@ -81,73 +81,7 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedNamespace, "namespace", "n", "", "namespace (optional)")
-	_ = viper.BindEnv("namespace", "KUBECTL_PLUGINS_CURRENT_NAMESPACE")
-	_ = viper.BindPFlag("namespace", cmd.Flags().Lookup("namespace"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedInterface, "interface", "i", "any", "pod interface to packet capture (optional)")
-	_ = viper.BindEnv("interface", "KUBECTL_PLUGINS_LOCAL_FLAG_INTERFACE")
-	_ = viper.BindPFlag("interface", cmd.Flags().Lookup("interface"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedContainer, "container", "c", "", "container (optional)")
-	_ = viper.BindEnv("container", "KUBECTL_PLUGINS_LOCAL_FLAG_CONTAINER")
-	_ = viper.BindPFlag("container", cmd.Flags().Lookup("container"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedFilter, "filter", "f", "", "tcpdump filter (optional)")
-	_ = viper.BindEnv("filter", "KUBECTL_PLUGINS_LOCAL_FLAG_FILTER")
-	_ = viper.BindPFlag("filter", cmd.Flags().Lookup("filter"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedOutputFile, "output-file", "o", "",
-		"output file path, tcpdump output will be redirect to this file instead of wireshark (optional) ('-' stdout)")
-	_ = viper.BindEnv("output-file", "KUBECTL_PLUGINS_LOCAL_FLAG_OUTPUT_FILE")
-	_ = viper.BindPFlag("output-file", cmd.Flags().Lookup("output-file"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedLocalTcpdumpPath, "local-tcpdump-path", "l", "",
-		"local static tcpdump binary path (optional)")
-	_ = viper.BindEnv("local-tcpdump-path", "KUBECTL_PLUGINS_LOCAL_FLAG_LOCAL_TCPDUMP_PATH")
-	_ = viper.BindPFlag("local-tcpdump-path", cmd.Flags().Lookup("local-tcpdump-path"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedRemoteTcpdumpPath, "remote-tcpdump-path", "r", tcpdumpRemotePath,
-		"remote static tcpdump binary path (optional)")
-	_ = viper.BindEnv("remote-tcpdump-path", "KUBECTL_PLUGINS_LOCAL_FLAG_REMOTE_TCPDUMP_PATH")
-	_ = viper.BindPFlag("remote-tcpdump-path", cmd.Flags().Lookup("remote-tcpdump-path"))
-
-	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedVerboseMode, "verbose", "v", false,
-		"if specified, ksniff output will include debug information (optional)")
-	_ = viper.BindEnv("verbose", "KUBECTL_PLUGINS_LOCAL_FLAG_VERBOSE")
-	_ = viper.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
-
-	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedPrivilegedMode, "privileged", "p", false,
-		"if specified, ksniff will deploy another pod that have privileges to attach target pod network namespace")
-	_ = viper.BindEnv("privileged", "KUBECTL_PLUGINS_LOCAL_FLAG_PRIVILEGED")
-	_ = viper.BindPFlag("privileged", cmd.Flags().Lookup("privileged"))
-
-	cmd.Flags().DurationVarP(&ksniffSettings.UserSpecifiedPodCreateTimeout, "pod-creation-timeout", "",
-		1*time.Minute, "the length of time to wait for privileged pod to be created (e.g. 20s, 2m, 1h). "+
-			"A value of zero means the creation never times out.")
-
-	cmd.Flags().StringVarP(&ksniffSettings.Image, "image", "", "",
-		"the privileged container image (optional)")
-	_ = viper.BindEnv("image", "KUBECTL_PLUGINS_LOCAL_FLAG_IMAGE")
-	_ = viper.BindPFlag("image", cmd.Flags().Lookup("image"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.TCPDumpImage, "tcpdump-image", "", "",
-		"the tcpdump container image (optional)")
-	_ = viper.BindEnv("tcpdump-image", "KUBECTL_PLUGINS_LOCAL_FLAG_TCPDUMP_IMAGE")
-	_ = viper.BindPFlag("tcpdump-image", cmd.Flags().Lookup("tcpdump-image"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedKubeContext, "context", "x", "",
-		"kubectl context to work on (optional)")
-	_ = viper.BindEnv("context", "KUBECTL_PLUGINS_CURRENT_CONTEXT")
-	_ = viper.BindPFlag("context", cmd.Flags().Lookup("context"))
-
-	cmd.Flags().StringVarP(&ksniffSettings.SocketPath, "socket", "", "",
-		"the container runtime socket path (optional)")
-	_ = viper.BindEnv("socket", "KUBECTL_PLUGINS_SOCKET_PATH")
-	_ = viper.BindPFlag("socket", cmd.Flags().Lookup("socket"))
-
-	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedNodeMode, "node", "", false, "perform node-level packet capture")
-
+	addKsniffFlags(ksniffSettings, cmd)
 	return cmd
 }
 
@@ -416,4 +350,73 @@ func (o *Ksniff) Run() error {
 	}
 
 	return nil
+}
+
+func addKsniffFlags(ksniffSettings *config.KsniffSettings, cmd *cobra.Command) {
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedNamespace, "namespace", "n", "", "namespace (optional)")
+	_ = viper.BindEnv("namespace", "KUBECTL_PLUGINS_CURRENT_NAMESPACE")
+	_ = viper.BindPFlag("namespace", cmd.Flags().Lookup("namespace"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedInterface, "interface", "i", "any", "pod interface to packet capture (optional)")
+	_ = viper.BindEnv("interface", "KUBECTL_PLUGINS_LOCAL_FLAG_INTERFACE")
+	_ = viper.BindPFlag("interface", cmd.Flags().Lookup("interface"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedContainer, "container", "c", "", "container (optional)")
+	_ = viper.BindEnv("container", "KUBECTL_PLUGINS_LOCAL_FLAG_CONTAINER")
+	_ = viper.BindPFlag("container", cmd.Flags().Lookup("container"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedFilter, "filter", "f", "", "tcpdump filter (optional)")
+	_ = viper.BindEnv("filter", "KUBECTL_PLUGINS_LOCAL_FLAG_FILTER")
+	_ = viper.BindPFlag("filter", cmd.Flags().Lookup("filter"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedOutputFile, "output-file", "o", "",
+		"output file path, tcpdump output will be redirect to this file instead of wireshark (optional) ('-' stdout)")
+	_ = viper.BindEnv("output-file", "KUBECTL_PLUGINS_LOCAL_FLAG_OUTPUT_FILE")
+	_ = viper.BindPFlag("output-file", cmd.Flags().Lookup("output-file"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedLocalTcpdumpPath, "local-tcpdump-path", "l", "",
+		"local static tcpdump binary path (optional)")
+	_ = viper.BindEnv("local-tcpdump-path", "KUBECTL_PLUGINS_LOCAL_FLAG_LOCAL_TCPDUMP_PATH")
+	_ = viper.BindPFlag("local-tcpdump-path", cmd.Flags().Lookup("local-tcpdump-path"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedRemoteTcpdumpPath, "remote-tcpdump-path", "r", tcpdumpRemotePath,
+		"remote static tcpdump binary path (optional)")
+	_ = viper.BindEnv("remote-tcpdump-path", "KUBECTL_PLUGINS_LOCAL_FLAG_REMOTE_TCPDUMP_PATH")
+	_ = viper.BindPFlag("remote-tcpdump-path", cmd.Flags().Lookup("remote-tcpdump-path"))
+
+	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedVerboseMode, "verbose", "v", false,
+		"if specified, ksniff output will include debug information (optional)")
+	_ = viper.BindEnv("verbose", "KUBECTL_PLUGINS_LOCAL_FLAG_VERBOSE")
+	_ = viper.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
+
+	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedPrivilegedMode, "privileged", "p", false,
+		"if specified, ksniff will deploy another pod that have privileges to attach target pod network namespace")
+	_ = viper.BindEnv("privileged", "KUBECTL_PLUGINS_LOCAL_FLAG_PRIVILEGED")
+	_ = viper.BindPFlag("privileged", cmd.Flags().Lookup("privileged"))
+
+	cmd.Flags().DurationVarP(&ksniffSettings.UserSpecifiedPodCreateTimeout, "pod-creation-timeout", "",
+		1*time.Minute, "the length of time to wait for privileged pod to be created (e.g. 20s, 2m, 1h). "+
+			"A value of zero means the creation never times out.")
+
+	cmd.Flags().StringVarP(&ksniffSettings.Image, "image", "", "",
+		"the privileged container image (optional)")
+	_ = viper.BindEnv("image", "KUBECTL_PLUGINS_LOCAL_FLAG_IMAGE")
+	_ = viper.BindPFlag("image", cmd.Flags().Lookup("image"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.TCPDumpImage, "tcpdump-image", "", "",
+		"the tcpdump container image (optional)")
+	_ = viper.BindEnv("tcpdump-image", "KUBECTL_PLUGINS_LOCAL_FLAG_TCPDUMP_IMAGE")
+	_ = viper.BindPFlag("tcpdump-image", cmd.Flags().Lookup("tcpdump-image"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedKubeContext, "context", "x", "",
+		"kubectl context to work on (optional)")
+	_ = viper.BindEnv("context", "KUBECTL_PLUGINS_CURRENT_CONTEXT")
+	_ = viper.BindPFlag("context", cmd.Flags().Lookup("context"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.SocketPath, "socket", "", "",
+		"the container runtime socket path (optional)")
+	_ = viper.BindEnv("socket", "KUBECTL_PLUGINS_SOCKET_PATH")
+	_ = viper.BindPFlag("socket", cmd.Flags().Lookup("socket"))
+
+	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedNodeMode, "node", "", false, "perform node-level packet capture")
 }
