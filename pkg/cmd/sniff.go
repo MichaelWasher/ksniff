@@ -7,6 +7,7 @@ import (
 	"ksniff/kube"
 	"ksniff/pkg/config"
 	"ksniff/pkg/service/sniffer"
+	"ksniff/pkg/service/sniffer/runtime"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -144,6 +145,8 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 		"the container runtime socket path (optional)")
 	_ = viper.BindEnv("socket", "KUBECTL_PLUGINS_SOCKET_PATH")
 	_ = viper.BindPFlag("socket", cmd.Flags().Lookup("socket"))
+
+	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedNodeMode, "node", "", false, "perform node-level packet capture")
 
 	return cmd
 }
@@ -298,17 +301,18 @@ func (o *Ksniff) Validate() error {
 
 	kubernetesApiService := kube.NewKubernetesApiService(o.clientset, o.restConfig, o.resultingContext.Namespace)
 
-	log.Info("sniffing method: node")
-	o.snifferService = sniffer.NewNodeSnifferService(o.settings, kubernetesApiService)
+	if o.settings.UserSpecifiedPrivilegedMode {
+		log.Info("sniffing method: privileged pod")
+		bridge := runtime.NewContainerRuntimeBridge(o.settings.DetectedContainerRuntime)
+		o.snifferService = sniffer.NewPrivilegedPodRemoteSniffingService(o.settings, kubernetesApiService, bridge)
+	} else if o.settings.UserSpecifiedNodeMode {
+		log.Info("sniffing method: node")
+		o.snifferService = sniffer.NewNodeSnifferService(o.settings, kubernetesApiService)
 
-	// if o.settings.UserSpecifiedPrivilegedMode {
-	// 	log.Info("sniffing method: privileged pod")
-	// 	bridge := runtime.NewContainerRuntimeBridge(o.settings.DetectedContainerRuntime)
-	// 	o.snifferService = sniffer.NewPrivilegedPodRemoteSniffingService(o.settings, kubernetesApiService, bridge)
-	// } else {
-	// 	log.Info("sniffing method: upload static tcpdump")
-	// 	o.snifferService = sniffer.NewUploadTcpdumpRemoteSniffingService(o.settings, kubernetesApiService)
-	// }
+	} else {
+		log.Info("sniffing method: upload static tcpdump")
+		o.snifferService = sniffer.NewUploadTcpdumpRemoteSniffingService(o.settings, kubernetesApiService)
+	}
 
 	return nil
 }

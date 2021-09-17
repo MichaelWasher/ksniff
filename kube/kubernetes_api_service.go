@@ -18,12 +18,24 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+type PrivilegedPodConfig struct {
+	NodeName      string
+	ContainerName string
+	Image         string
+	SocketPath    string
+	Timeout       time.Duration
+}
+
+func NewCreatePodConfig() *PrivilegedPodConfig {
+	return &PrivilegedPodConfig{Timeout: 10 * time.Minute}
+}
+
 type KubernetesApiService interface {
 	ExecuteCommand(podName string, containerName string, command []string, stdOut io.Writer) (int, error)
 
 	DeletePod(podName string) error
 
-	CreatePrivilegedPod(nodeName string, containerName string, image string, socketPath string, timeout time.Duration) (*corev1.Pod, error)
+	CreatePrivilegedPod(config *PrivilegedPodConfig) (*corev1.Pod, error)
 
 	UploadFile(localPath string, remotePath string, podName string, containerName string) error
 }
@@ -104,17 +116,19 @@ func (k *KubernetesApiServiceImpl) DeletePod(podName string) error {
 	return err
 }
 
-func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containerName string, image string, socketPath string, timeout time.Duration) (*corev1.Pod, error) {
-	log.Debugf("creating privileged pod on remote node")
+func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(config *PrivilegedPodConfig) (*corev1.Pod, error) {
+	log.Info("creating privileged pod on remote node")
+	log.Debug("creating privileged pod with the following options: { %v }", config)
+
 	hostNetwork := true
 
-	isSupported, err := k.IsSupportedContainerRuntime(nodeName)
+	isSupported, err := k.IsSupportedContainerRuntime(config.NodeName)
 	if err != nil {
 		return nil, err
 	}
 
 	if !isSupported {
-		return nil, errors.Errorf("Container runtime on node %s isn't supported. Supported container runtimes are: %v", nodeName, runtime.SupportedContainerRuntimes)
+		return nil, errors.Errorf("Container runtime on node %s isn't supported. Supported container runtimes are: %v", config.NodeName, runtime.SupportedContainerRuntimes)
 	}
 
 	typeMetadata := v1.TypeMeta{
@@ -130,6 +144,10 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containe
 		},
 	}
 
+	// Create Storage
+	hostPathType := corev1.HostPathSocket
+	directoryType := corev1.HostPathDirectory
+
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      "host",
@@ -137,33 +155,6 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containe
 			MountPath: "/host",
 		},
 	}
-
-	log.Infof("Socket path is configuraed as '%v'", socketPath)
-
-	if socketPath != "" {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "container-socket",
-			ReadOnly:  true,
-			MountPath: socketPath,
-		})
-
-	}
-
-	privileged := true
-	privilegedContainer := corev1.Container{
-		Name:  containerName,
-		Image: image,
-
-		SecurityContext: &corev1.SecurityContext{
-			Privileged: &privileged,
-		},
-
-		Command:      []string{"sh", "-c", "sleep 10000000"},
-		VolumeMounts: volumeMounts,
-	}
-
-	hostPathType := corev1.HostPathSocket
-	directoryType := corev1.HostPathDirectory
 
 	volumes := []corev1.Volume{
 		{
@@ -176,20 +167,39 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containe
 			},
 		},
 	}
-	if socketPath != "" {
+
+	if config.SocketPath != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "container-socket",
+			ReadOnly:  true,
+			MountPath: config.SocketPath,
+		})
 		volumes = append(volumes, corev1.Volume{
 			Name: "container-socket",
 			VolumeSource: corev1.VolumeSource{
 				HostPath: &corev1.HostPathVolumeSource{
-					Path: socketPath,
+					Path: config.SocketPath,
 					Type: &hostPathType,
 				},
 			},
 		})
 	}
 
+	privileged := true
+	privilegedContainer := corev1.Container{
+		Name:  config.ContainerName,
+		Image: config.Image,
+
+		SecurityContext: &corev1.SecurityContext{
+			Privileged: &privileged,
+		},
+
+		Command:      []string{"sh", "-c", "sleep 10000000"},
+		VolumeMounts: volumeMounts,
+	}
+
 	podSpecs := corev1.PodSpec{
-		NodeName:      nodeName,
+		NodeName:      config.NodeName,
 		RestartPolicy: corev1.RestartPolicyNever,
 		HostPID:       true,
 		Containers:    []corev1.Container{privilegedContainer},
@@ -226,8 +236,8 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containe
 
 	log.Info("waiting for pod successful startup")
 
-	if !utils.RunWhileFalse(verifyPodState, timeout, 1*time.Second) {
-		return nil, errors.Errorf("failed to create pod within timeout (%s)", timeout)
+	if !utils.RunWhileFalse(verifyPodState, config.Timeout, 1*time.Second) {
+		return nil, errors.Errorf("failed to create pod within timeout (%s)", config.Timeout)
 	}
 
 	return createdPod, nil

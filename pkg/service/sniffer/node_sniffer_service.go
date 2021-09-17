@@ -10,7 +10,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 )
 
-var defaultInterface = "ens192"
+var defaultInterface = "any"
 
 type NodeSnifferService struct {
 	settings                *config.KsniffSettings
@@ -29,10 +29,9 @@ func (nss *NodeSnifferService) Setup() error {
 	var err error
 
 	log.Infof("creating privileged pod on node: '%s'", nss.settings.DetectedPodNodeName)
-	log.Infof("creating pod with options: '%v'", nss.settings)
+	log.Debug("creating pod with options: '%v'", nss.settings)
 	log.Debug("initiating sniff on node with option: '%v'", nss)
 
-	// TODO: Allow overload
 	if nss.settings.UseDefaultImage {
 		nss.settings.Image = "maintained/tcpdump"
 	}
@@ -41,13 +40,14 @@ func (nss *NodeSnifferService) Setup() error {
 		nss.settings.TCPDumpImage = ""
 	}
 
-	nss.privilegedPod, err = nss.kubernetesApiService.CreatePrivilegedPod(
-		nss.settings.DetectedPodNodeName,
-		nss.privilegedContainerName,
-		nss.settings.Image,
-		"",
-		nss.settings.UserSpecifiedPodCreateTimeout,
-	)
+	podConfig := kube.PrivilegedPodConfig{
+		NodeName:      nss.settings.DetectedPodNodeName,
+		ContainerName: nss.privilegedContainerName,
+		Image:         nss.settings.Image,
+		Timeout:       nss.settings.UserSpecifiedPodCreateTimeout,
+	}
+
+	nss.privilegedPod, err = nss.kubernetesApiService.CreatePrivilegedPod(&podConfig)
 	if err != nil {
 		log.WithError(err).Errorf("failed to create privileged pod on node: '%s'", nss.nodeName)
 		return err
