@@ -7,7 +7,6 @@ import (
 	"ksniff/kube"
 	"ksniff/pkg/config"
 	"ksniff/pkg/service/sniffer"
-	"ksniff/pkg/service/sniffer/runtime"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -299,14 +298,17 @@ func (o *Ksniff) Validate() error {
 
 	kubernetesApiService := kube.NewKubernetesApiService(o.clientset, o.restConfig, o.resultingContext.Namespace)
 
-	if o.settings.UserSpecifiedPrivilegedMode {
-		log.Info("sniffing method: privileged pod")
-		bridge := runtime.NewContainerRuntimeBridge(o.settings.DetectedContainerRuntime)
-		o.snifferService = sniffer.NewPrivilegedPodRemoteSniffingService(o.settings, kubernetesApiService, bridge)
-	} else {
-		log.Info("sniffing method: upload static tcpdump")
-		o.snifferService = sniffer.NewUploadTcpdumpRemoteSniffingService(o.settings, kubernetesApiService)
-	}
+	log.Info("sniffing method: node")
+	o.snifferService = sniffer.NewNodeSnifferService(o.settings, kubernetesApiService)
+
+	// if o.settings.UserSpecifiedPrivilegedMode {
+	// 	log.Info("sniffing method: privileged pod")
+	// 	bridge := runtime.NewContainerRuntimeBridge(o.settings.DetectedContainerRuntime)
+	// 	o.snifferService = sniffer.NewPrivilegedPodRemoteSniffingService(o.settings, kubernetesApiService, bridge)
+	// } else {
+	// 	log.Info("sniffing method: upload static tcpdump")
+	// 	o.snifferService = sniffer.NewUploadTcpdumpRemoteSniffingService(o.settings, kubernetesApiService)
+	// }
 
 	return nil
 }

@@ -106,6 +106,7 @@ func (k *KubernetesApiServiceImpl) DeletePod(podName string) error {
 
 func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containerName string, image string, socketPath string, timeout time.Duration) (*corev1.Pod, error) {
 	log.Debugf("creating privileged pod on remote node")
+	hostNetwork := true
 
 	isSupported, err := k.IsSupportedContainerRuntime(nodeName)
 	if err != nil {
@@ -131,15 +132,21 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containe
 
 	volumeMounts := []corev1.VolumeMount{
 		{
-			Name:      "container-socket",
-			ReadOnly:  true,
-			MountPath: socketPath,
-		},
-		{
 			Name:      "host",
 			ReadOnly:  false,
 			MountPath: "/host",
 		},
+	}
+
+	log.Infof("Socket path is configuraed as '%v'", socketPath)
+
+	if socketPath != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "container-socket",
+			ReadOnly:  true,
+			MountPath: socketPath,
+		})
+
 	}
 
 	privileged := true
@@ -158,31 +165,36 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(nodeName string, containe
 	hostPathType := corev1.HostPathSocket
 	directoryType := corev1.HostPathDirectory
 
+	volumes := []corev1.Volume{
+		{
+			Name: "host",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: "/",
+					Type: &directoryType,
+				},
+			},
+		},
+	}
+	if socketPath != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "container-socket",
+			VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{
+					Path: socketPath,
+					Type: &hostPathType,
+				},
+			},
+		})
+	}
+
 	podSpecs := corev1.PodSpec{
 		NodeName:      nodeName,
 		RestartPolicy: corev1.RestartPolicyNever,
 		HostPID:       true,
 		Containers:    []corev1.Container{privilegedContainer},
-		Volumes: []corev1.Volume{
-			{
-				Name: "host",
-				VolumeSource: corev1.VolumeSource{
-					HostPath: &corev1.HostPathVolumeSource{
-						Path: "/",
-						Type: &directoryType,
-					},
-				},
-			},
-			{
-				Name: "container-socket",
-				VolumeSource: corev1.VolumeSource{
-					HostPath: &corev1.HostPathVolumeSource{
-						Path: socketPath,
-						Type: &hostPathType,
-					},
-				},
-			},
-		},
+		Volumes:       volumes,
+		HostNetwork:   hostNetwork,
 	}
 
 	pod := corev1.Pod{
