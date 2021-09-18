@@ -1,12 +1,15 @@
 package config
 
 import (
-	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"time"
+
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 )
 
 type KsniffSettings struct {
 	UserSpecifiedPodName           string
+	DetectedPodList                []string
+	DetectedNodeList               []string
 	UserSpecifiedInterface         string
 	UserSpecifiedFilter            string
 	UserSpecifiedPodCreateTimeout  time.Duration
@@ -17,6 +20,7 @@ type KsniffSettings struct {
 	UserSpecifiedRemoteTcpdumpPath string
 	UserSpecifiedVerboseMode       bool
 	UserSpecifiedPrivilegedMode    bool
+	UserSpecifiedNodeMode          bool
 	UserSpecifiedImage             string
 	DetectedPodNodeName            string
 	DetectedContainerId            string
