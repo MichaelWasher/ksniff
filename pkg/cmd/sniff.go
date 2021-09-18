@@ -19,8 +19,10 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/kubernetes"
@@ -90,11 +92,6 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 }
 
 func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
-
-	if err := parseResourceTypes(cmd, args); err != nil {
-		log.Fatalf("There has been an error in the Complete function. %v", err)
-		return err
-	}
 
 	if len(args) < minimumNumberOfArguments {
 		_ = cmd.Usage()
@@ -171,6 +168,10 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 	if o.settings.UserSpecifiedNamespace != "" {
 		o.resultingContext.Namespace = o.settings.UserSpecifiedNamespace
 	}
+	if err := o.parseResourceTypes(cmd, args); err != nil {
+		log.Fatalf("There has been an error in the Complete function. %v", err)
+		return err
+	}
 
 	return nil
 }
@@ -215,7 +216,7 @@ func (o *Ksniff) Validate() error {
 		log.Infof("using tcpdump path at: '%s'", o.settings.UserSpecifiedLocalTcpdumpPath)
 	}
 
-	pod, err := o.clientset.CoreV1().Pods(o.resultingContext.Namespace).Get(context.TODO(), o.settings.UserSpecifiedPodName, v1.GetOptions{})
+	pod, err := o.clientset.CoreV1().Pods(o.resultingContext.Namespace).Get(context.TODO(), o.settings.UserSpecifiedPodName, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -430,7 +431,8 @@ func addKsniffFlags(ksniffSettings *config.KsniffSettings, cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedNodeMode, "node", "", false, "perform node-level packet capture")
 }
 
-func parseResourceTypes(cmd *cobra.Command, args []string) error {
+func (o *Ksniff) parseResourceTypes(cmd *cobra.Command, args []string) error {
+
 	kubeConfigFlags := genericclioptions.NewConfigFlags(true).WithDeprecatedPasswordFlag()
 	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
 	f := cmdutil.NewFactory(matchVersionKubeConfigFlags)
@@ -453,26 +455,97 @@ func parseResourceTypes(cmd *cobra.Command, args []string) error {
 
 	print("currently running into visit command")
 	log.Infof("Currently running into the visit command. Resource information is %v", information)
-
+	podList := []corev1.Pod{}
+	nodeList := []corev1.Node{}
 	err = r.Visit(func(info *resource.Info, err error) error {
 		if err != nil {
 			// TODO(verb): configurable early return
 			return err
 		}
+		var visitErr error
+
 		print("currently running into visit command")
 		log.Infof("Currently running into the visit command. Resource information is %v", info)
 
+		switch obj := info.Object.(type) {
+		case *corev1.Node:
+			log.Info("sniffing method: privileged node")
+			log.Debugf("sniffing node %v", obj)
+
+			nodeList = append(nodeList, *obj)
+
+		case *corev1.Pod:
+			if o.settings.UserSpecifiedPrivilegedMode {
+				log.Info("sniffing method: privileged pod")
+			} else {
+				log.Info("sniffing method: upload static tcpdump")
+			}
+			log.Debugf("sniffing pod %v", obj)
+
+			podList = append(podList, *obj)
+
+		case *corev1.Service:
+			// Collect the pods associated with the Service and add to PodList
+			labelSet := labels.Set(obj.Spec.Selector)
+
+			queryResp, err := getPodsForLabel(&labelSet, obj.Namespace, o.clientset)
+			if err != nil {
+				log.Info("unable to get list of Pods for Service %v. %v", obj, err)
+				return err
+			}
+
+			podList = append(podList, queryResp.Items...)
+		case *appsv1.Deployment:
+			// Collect the SVC associated with Deployment
+			// Collect the pods associated with the Service and add to PodList
+			labelSet := labels.Set(obj.Spec.Template.Labels)
+
+			queryResp, err := getPodsForLabel(&labelSet, obj.Namespace, o.clientset)
+			if err != nil {
+				log.Info("unable to get list of Pods for Deployment %v. %v", obj, err)
+				return err
+			}
+
+			podList = append(podList, queryResp.Items...)
+
+		case *appsv1.DaemonSet:
+			// Collect the SVC associated with Deployment
+			labelSet := labels.Set(obj.Spec.Template.Labels)
+
+			queryResp, err := getPodsForLabel(&labelSet, obj.Namespace, o.clientset)
+			if err != nil {
+				log.Info("unable to get list of Pods for Deployment %v. %v", obj, err)
+				return err
+			}
+
+			podList = append(podList, queryResp.Items...)
+
+		default:
+
+			visitErr = fmt.Errorf("%q not supported by debug", info.Mapping.GroupVersionKind)
+		}
+		if visitErr != nil {
+			return visitErr
+		}
 		return nil
 	})
+
+	/// Build the list of Nodes and Pods to select from; With
+
 	return err
 }
 
-// func getPodsForSvc(svc *corev1.Service, namespace string, k8sClient typev1.CoreV1Interface) (*corev1.PodList, error) {
-// 	set := labels.Set(svc.Spec.Selector)
-// 	listOptions := metav1.ListOptions{LabelSelector: set.AsSelector().String()}
-// 	pods, err := k8sClient.Pods(namespace).List(listOptions)
-// 	for _, pod := range pods.Items {
-// 		fmt.Fprintf(os.Stdout, "pod name: %v\n", pod.Name)
-// 	}
-// 	return pods, err
-// }
+func getPodsForLabel(labelSet *labels.Set, namespace string, clientSet *kubernetes.Clientset) (*corev1.PodList, error) {
+	ctx := context.TODO()
+	labelSelector := labelSet.AsSelector().String()
+
+	options := metav1.ListOptions{
+		LabelSelector: labelSelector,
+		Limit:         10,
+	}
+
+	pods, err := clientSet.CoreV1().Pods(namespace).List(ctx, options)
+	log.Infof("Finished collecting Pods for Labelset %v", *labelSet)
+	log.Info("Pods found: [ %v ]", pods)
+	return pods, err
+}
