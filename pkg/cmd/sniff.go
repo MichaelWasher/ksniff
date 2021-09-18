@@ -22,14 +22,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/tools/clientcmd/api"
-
 	_ "k8s.io/client-go/plugin/pkg/client/auth/azure"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
+	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+	"k8s.io/kubectl/pkg/scheme"
 )
 
 var (
@@ -59,6 +61,8 @@ func NewKsniff(settings *config.KsniffSettings) *Ksniff {
 func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 	ksniffSettings := config.NewKsniffSettings(streams)
 
+	log.SetLevel(log.DebugLevel)
+
 	ksniff := NewKsniff(ksniffSettings)
 
 	cmd := &cobra.Command{
@@ -86,6 +90,11 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 }
 
 func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
+
+	if err := parseResourceTypes(cmd, args); err != nil {
+		log.Fatalf("There has been an error in the Complete function. %v", err)
+		return err
+	}
 
 	if len(args) < minimumNumberOfArguments {
 		_ = cmd.Usage()
@@ -420,3 +429,50 @@ func addKsniffFlags(ksniffSettings *config.KsniffSettings, cmd *cobra.Command) {
 
 	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedNodeMode, "node", "", false, "perform node-level packet capture")
 }
+
+func parseResourceTypes(cmd *cobra.Command, args []string) error {
+	kubeConfigFlags := genericclioptions.NewConfigFlags(true).WithDeprecatedPasswordFlag()
+	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
+	f := cmdutil.NewFactory(matchVersionKubeConfigFlags)
+	namespace, _, err := f.ToRawKubeConfigLoader().Namespace()
+	if err != nil {
+		return err
+	}
+
+	b := f.NewBuilder().
+		WithScheme(scheme.Scheme, scheme.Scheme.PrioritizedVersionsAllGroups()...).
+		ResourceTypeOrNameArgs(true, args...).NamespaceParam(namespace).DefaultNamespace()
+
+	r := b.Do()
+	information, err := r.Infos()
+
+	if err != nil {
+		log.Infof("There was an error with querying the API: %v", err)
+		return err
+	}
+
+	print("currently running into visit command")
+	log.Infof("Currently running into the visit command. Resource information is %v", information)
+
+	err = r.Visit(func(info *resource.Info, err error) error {
+		if err != nil {
+			// TODO(verb): configurable early return
+			return err
+		}
+		print("currently running into visit command")
+		log.Infof("Currently running into the visit command. Resource information is %v", info)
+
+		return nil
+	})
+	return err
+}
+
+// func getPodsForSvc(svc *corev1.Service, namespace string, k8sClient typev1.CoreV1Interface) (*corev1.PodList, error) {
+// 	set := labels.Set(svc.Spec.Selector)
+// 	listOptions := metav1.ListOptions{LabelSelector: set.AsSelector().String()}
+// 	pods, err := k8sClient.Pods(namespace).List(listOptions)
+// 	for _, pod := range pods.Items {
+// 		fmt.Fprintf(os.Stdout, "pod name: %v\n", pod.Name)
+// 	}
+// 	return pods, err
+// }

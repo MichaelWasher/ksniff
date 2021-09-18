@@ -8,6 +8,8 @@ import (
 
 type KsniffSettings struct {
 	UserSpecifiedPodName           string
+	DetectedPodList                []string
+	DetectedNodeList               []string
 	UserSpecifiedInterface         string
 	UserSpecifiedFilter            string
 	UserSpecifiedPodCreateTimeout  time.Duration
