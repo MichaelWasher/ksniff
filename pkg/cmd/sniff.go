@@ -17,9 +17,12 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/cli-runtime/pkg/resource"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/azure"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
@@ -27,6 +30,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
+	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+	"k8s.io/kubectl/pkg/scheme"
 )
 
 var (
@@ -224,6 +229,12 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 		o.resultingContext.Namespace = o.settings.UserSpecifiedNamespace
 	}
 
+	if err := o.parseResourceTypes(cmd, args); err != nil {
+		log.Fatalf("There has been an error in the Complete function. %v", err)
+		return err
+	}
+
+		 
 	return nil
 }
 
@@ -246,6 +257,7 @@ func (o *Ksniff) buildTcpdumpBinaryPathLookupList() ([]string, error) {
 	return append([]string{o.settings.UserSpecifiedLocalTcpdumpPath, ksniffBinaryPath},
 		filepath.Join("/usr/local/bin/", tcpdumpBinaryName), kubeKsniffPluginFolder), nil
 }
+
 func (o *Ksniff) Validate() error {
 	if len(o.rawConfig.CurrentContext) == 0 {
 		return errors.New("context doesn't exist")
@@ -457,3 +469,124 @@ func (o *Ksniff) Run() error {
 
 	return nil
 }
+
+
+func (o *Ksniff) parseResourceTypes(cmd *cobra.Command, args []string) error {
+
+	kubeConfigFlags := genericclioptions.NewConfigFlags(true).WithDeprecatedPasswordFlag()
+	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
+	f := cmdutil.NewFactory(matchVersionKubeConfigFlags)
+	namespace, _, err := f.ToRawKubeConfigLoader().Namespace()
+	if err != nil {
+		return err
+	}
+
+	b := f.NewBuilder().
+		WithScheme(scheme.Scheme, scheme.Scheme.PrioritizedVersionsAllGroups()...).
+		ResourceTypeOrNameArgs(true, args...).NamespaceParam(namespace).DefaultNamespace()
+
+	r := b.Do()
+	information, err := r.Infos()
+
+	if err != nil {
+		log.Infof("There was an error with querying the API: %v", err)
+		return err
+	}
+
+	print("currently running into visit command")
+	log.Infof("Currently running into the visit command. Resource information is %v", information)
+	podList := []corev1.Pod{}
+	nodeList := []corev1.Node{}
+	err = r.Visit(func(info *resource.Info, err error) error {
+		if err != nil {
+			// TODO(verb): configurable early return
+			return err
+		}
+		var visitErr error
+
+		print("currently running into visit command")
+		log.Infof("Currently running into the visit command. Resource information is %v", info)
+
+		switch obj := info.Object.(type) {
+		case *corev1.Node:
+			log.Info("sniffing method: privileged node")
+			log.Debugf("sniffing node %v", obj)
+
+			nodeList = append(nodeList, *obj)
+
+		case *corev1.Pod:
+			if o.settings.UserSpecifiedPrivilegedMode {
+				log.Info("sniffing method: privileged pod")
+			} else {
+				log.Info("sniffing method: upload static tcpdump")
+			}
+			log.Debugf("sniffing pod %v", obj)
+
+			podList = append(podList, *obj)
+
+		case *corev1.Service:
+			// Collect the pods associated with the Service and add to PodList
+			labelSet := labels.Set(obj.Spec.Selector)
+
+			queryResp, err := getPodsForLabel(&labelSet, obj.Namespace, o.clientset)
+			if err != nil {
+				log.Infof("unable to get list of Pods for Service %v. %v", obj, err)
+				return err
+			}
+
+			podList = append(podList, queryResp.Items...)
+		case *appsv1.Deployment:
+			// Collect the SVC associated with Deployment
+			// Collect the pods associated with the Service and add to PodList
+			labelSet := labels.Set(obj.Spec.Template.Labels)
+
+			queryResp, err := getPodsForLabel(&labelSet, obj.Namespace, o.clientset)
+			if err != nil {
+				log.Infof("unable to get list of Pods for Deployment %v. %v", obj, err)
+				return err
+			}
+
+			podList = append(podList, queryResp.Items...)
+
+		case *appsv1.DaemonSet:
+			// Collect the SVC associated with Deployment
+			labelSet := labels.Set(obj.Spec.Template.Labels)
+
+			queryResp, err := getPodsForLabel(&labelSet, obj.Namespace, o.clientset)
+			if err != nil {
+				log.Infof("unable to get list of Pods for DaemonSet %v. %v", obj, err)
+				return err
+			}
+
+			podList = append(podList, queryResp.Items...)
+
+		default:
+
+			visitErr = fmt.Errorf("%q not supported by debug", info.Mapping.GroupVersionKind)
+		}
+		if visitErr != nil {
+			return visitErr
+		}
+		return nil
+	})
+
+	/// Build the list of Nodes and Pods to select from; With
+
+	return err
+}
+
+func getPodsForLabel(labelSet *labels.Set, namespace string, clientSet *kubernetes.Clientset) (*corev1.PodList, error) {
+	ctx := context.TODO()
+	labelSelector := labelSet.AsSelector().String()
+
+	options := metav1.ListOptions{
+		LabelSelector: labelSelector,
+		Limit:         10,
+	}
+
+	pods, err := clientSet.CoreV1().Pods(namespace).List(ctx, options)
+	log.Infof("Finished collecting Pods for Labelset %v", *labelSet)
+	log.Infof("Pods found: [ %v ]", pods)
+	return pods, err
+}
+
