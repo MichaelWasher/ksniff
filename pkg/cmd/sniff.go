@@ -52,6 +52,8 @@ type Ksniff struct {
 	rawConfig        api.Config
 	settings         *config.KsniffSettings
 	snifferServices  []sniffer.SnifferService
+	pods             []corev1.Pod
+	nodes            []corev1.Node
 }
 
 func NewKsniff(settings *config.KsniffSettings) *Ksniff {
@@ -158,6 +160,7 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 		return errors.New("not enough arguments")
 	}
 
+	// TODO this must be changed for the list of selectors:
 	o.settings.UserSpecifiedPodName = args[0]
 	if o.settings.UserSpecifiedPodName == "" {
 		return errors.New("pod name is empty")
@@ -176,7 +179,7 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 	o.settings.UseDefaultImage = !cmd.Flag("image").Changed
 	o.settings.UseDefaultTCPDumpImage = !cmd.Flag("tcpdump-image").Changed
 	o.settings.UseDefaultSocketPath = !cmd.Flag("socket").Changed
-	
+
 	var err error
 
 	if o.settings.UserSpecifiedVerboseMode {
@@ -229,12 +232,15 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 		o.resultingContext.Namespace = o.settings.UserSpecifiedNamespace
 	}
 
-	if err := o.parseResourceTypes(cmd, args); err != nil {
+	podList, nodeList, err := o.parseResourceTypes(cmd, args)
+	if err != nil {
 		log.Fatalf("There has been an error in the Complete function. %v", err)
 		return err
 	}
 
-		 
+	o.pods = podList
+	o.nodes = nodeList
+
 	return nil
 }
 
@@ -277,19 +283,42 @@ func (o *Ksniff) Validate() error {
 
 		log.Infof("using tcpdump path at: '%s'", o.settings.UserSpecifiedLocalTcpdumpPath)
 	}
+	//TODO Pods collection placement and convert podList to &podList (the same with nodeList)
+	// pod, err := o.clientset.CoreV1().Pods(o.resultingContext.Namespace).Get(context.TODO(), o.settings.UserSpecifiedPodName, metav1.GetOptions{})
+	// if err != nil {
+	// 	return err
+	// }
 
-	pod, err := o.clientset.CoreV1().Pods(o.resultingContext.Namespace).Get(context.TODO(), o.settings.UserSpecifiedPodName, metav1.GetOptions{})
-	if err != nil {
-		return err
+	for _, podInstance := range o.pods {
+		snifferService, err := o.getPodSnifferService(&podInstance)
+		if err != nil {
+			return err
+		}
+		o.snifferServices = append(o.snifferServices, snifferService)
 	}
-
-	snifferService, err := o.getPodSnifferService(pod)
-	if err != nil {
-		return err
+	for _, nodeInstance := range o.nodes {
+		snifferService := o.getNodeSnifferService(&nodeInstance)
+		o.snifferServices = append(o.snifferServices, snifferService)
 	}
-	o.snifferServices = append(o.snifferServices, snifferService)
 
 	return nil
+}
+
+// TODO Merge into getPodSnifferService to better reuse code
+func (o *Ksniff) getNodeSnifferService(node *corev1.Node) sniffer.SnifferService {
+	// TODO ; Remove the dependence on o.settings
+	// TODO Check that there is Ready
+	// TODO Remove ksniff requirements Set values into ksniff config
+	o.settings.UserSpecifiedNodeName = node.Name
+	o.settings.DetectedPodNodeName = node.Name
+
+	// Get a Sniffer Service
+	log.Info("sniffing method: node")
+	log.Debugf("node '%s' status: '%s'", node.Name, &node.Status.Conditions)
+	var snifferVar sniffer.SnifferService
+	kubernetesApiService := kube.NewKubernetesApiService(o.clientset, o.restConfig, o.resultingContext.Namespace)
+	snifferVar = sniffer.NewNodeSnifferService(o.settings, kubernetesApiService)
+	return snifferVar
 }
 
 func (o *Ksniff) getPodSnifferService(pod *corev1.Pod) (sniffer.SnifferService, error) {
@@ -360,6 +389,7 @@ func (o *Ksniff) Run() error {
 		o.settings.UserSpecifiedPodName, o.resultingContext.Namespace, o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedFilter, o.settings.UserSpecifiedInterface)
 
 	for _, snifferService := range o.snifferServices {
+		// TODO Run asynchronously to speed up the process and then wait on waitgroup
 		err := snifferService.Setup()
 
 		if err != nil {
@@ -373,8 +403,11 @@ func (o *Ksniff) Run() error {
 		var errList []error
 
 		for _, snifferService := range o.snifferServices {
-			err := snifferService.Setup()
-			errList = append(errList, err)
+			err := snifferService.Cleanup()
+			if err != nil {
+				// TODO Add output to the obj name
+				errList = append(errList, err)
+			}
 		}
 
 		if len(errList) != 0 {
@@ -388,7 +421,6 @@ func (o *Ksniff) Run() error {
 		log.Info("sniffer cleanup completed successfully")
 	}()
 
-	
 	// TODO If there are multiple Pods then an outputfile per Pod and create a folder
 	if o.settings.UserSpecifiedOutputFile != "" {
 		log.Infof("output file option specified, storing output in: '%s'", o.settings.UserSpecifiedOutputFile)
@@ -424,8 +456,11 @@ func (o *Ksniff) Run() error {
 		}
 
 		for id, snifferService := range o.snifferServices {
+			//TODO  Double check this works with multiple fileWriters.
 			err := snifferService.Start(fileWriters[id])
-			errList = append(errList, err)
+			if err != nil {
+				errList = append(errList, err)
+			}
 		}
 
 		if len(errList) != 0 {
@@ -440,7 +475,7 @@ func (o *Ksniff) Run() error {
 		// TODO Add validation checks for multi-pods without selecting -o into the validate function (When multiple Pods is added to the CLI)
 		if len(o.snifferServices) != 1 {
 			return fmt.Errorf("unable to run wireshark when collecting from multiple resources. Resources %v", o.snifferServices)
-			
+
 		}
 
 		log.Info("spawning wireshark!")
@@ -470,33 +505,34 @@ func (o *Ksniff) Run() error {
 	return nil
 }
 
-
-func (o *Ksniff) parseResourceTypes(cmd *cobra.Command, args []string) error {
+func (o *Ksniff) parseResourceTypes(cmd *cobra.Command, args []string) ([]corev1.Pod, []corev1.Node, error) {
 
 	kubeConfigFlags := genericclioptions.NewConfigFlags(true).WithDeprecatedPasswordFlag()
 	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
 	f := cmdutil.NewFactory(matchVersionKubeConfigFlags)
 	namespace, _, err := f.ToRawKubeConfigLoader().Namespace()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	b := f.NewBuilder().
 		WithScheme(scheme.Scheme, scheme.Scheme.PrioritizedVersionsAllGroups()...).
-		ResourceTypeOrNameArgs(true, args...).NamespaceParam(namespace).DefaultNamespace()
+		ResourceNames("pod", args...).NamespaceParam(namespace).DefaultNamespace()
 
 	r := b.Do()
 	information, err := r.Infos()
 
 	if err != nil {
 		log.Infof("There was an error with querying the API: %v", err)
-		return err
+		return nil, nil, err
 	}
 
 	print("currently running into visit command")
 	log.Infof("Currently running into the visit command. Resource information is %v", information)
+
 	podList := []corev1.Pod{}
 	nodeList := []corev1.Node{}
+
 	err = r.Visit(func(info *resource.Info, err error) error {
 		if err != nil {
 			// TODO(verb): configurable early return
@@ -571,8 +607,8 @@ func (o *Ksniff) parseResourceTypes(cmd *cobra.Command, args []string) error {
 	})
 
 	/// Build the list of Nodes and Pods to select from; With
-
-	return err
+	log.Infof("Pod List: '%v', nodeList '%v'", podList, nodeList)
+	return podList, nodeList, nil
 }
 
 func getPodsForLabel(labelSet *labels.Set, namespace string, clientSet *kubernetes.Clientset) (*corev1.PodList, error) {
@@ -589,4 +625,3 @@ func getPodsForLabel(labelSet *labels.Set, namespace string, clientSet *kubernet
 	log.Infof("Pods found: [ %v ]", pods)
 	return pods, err
 }
-

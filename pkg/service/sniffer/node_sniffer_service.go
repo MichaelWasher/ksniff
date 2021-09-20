@@ -18,23 +18,25 @@ type NodeSnifferService struct {
 	privilegedContainerName string
 	targetInterface         string
 	// TODO Replace Node Name
-	nodeName                string
-	kubernetesApiService    kube.KubernetesApiService
+	nodeName             string
+	kubernetesApiService kube.KubernetesApiService
 }
 
 func NewNodeSnifferService(options *config.KsniffSettings, service kube.KubernetesApiService) SnifferService {
+
+	// TODO Check the input values in all of the SnifferServices
 	nodeSnifferService := &NodeSnifferService{
 		NodeSnifferServiceConfig: &config.NodeSnifferServiceConfig{
-			Image: options.UserSpecifiedImage,
-			UserSpecifiedInterface: options.UserSpecifiedInterface,
-			UserSpecifiedFilter: options.UserSpecifiedFilter,
-			NodeName: options.UserSpecifiedNodeName,
+			Image:                         options.UserSpecifiedImage,
+			UserSpecifiedInterface:        options.UserSpecifiedInterface,
+			UserSpecifiedFilter:           options.UserSpecifiedFilter,
+			NodeName:                      options.UserSpecifiedNodeName,
 			UserSpecifiedPodCreateTimeout: options.UserSpecifiedPodCreateTimeout,
-		}, 
-		privilegedContainerName: "node-sniff", 
-		kubernetesApiService: service, 
-		nodeName: options.DetectedPodNodeName, 
-		targetInterface: defaultInterface,
+		},
+		privilegedContainerName: "node-sniff",
+		kubernetesApiService:    service,
+		nodeName:                options.DetectedPodNodeName,
+		targetInterface:         defaultInterface,
 	}
 
 	if options.UseDefaultImage {
@@ -49,7 +51,7 @@ func (nss *NodeSnifferService) Setup() error {
 	// TODO Create a Nodesniffer Object
 	log.Infof("creating privileged pod on node: '%s'", nss.nodeName)
 	log.Debugf("initiating sniff on node with option: '%v'", nss)
-	
+
 	podConfig := kube.PrivilegedPodConfig{
 		// TODO Replace DetectedPodNodeName with PodName
 		NodeName:      nss.nodeName,
