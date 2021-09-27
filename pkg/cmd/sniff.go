@@ -9,7 +9,9 @@ import (
 	"ksniff/pkg/service/sniffer"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/mitchellh/go-homedir"
@@ -88,6 +90,10 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedNamespace, "namespace", "n", "", "namespace (optional)")
 	_ = viper.BindEnv("namespace", "KUBECTL_PLUGINS_CURRENT_NAMESPACE")
 	_ = viper.BindPFlag("namespace", cmd.Flags().Lookup("namespace"))
+
+	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedNamespace, "create-namespace", "", "", "create-namespace (optional)")
+	_ = viper.BindEnv("create-namespace", "KUBECTL_PLUGINS_CREATE_NAMESPACE")
+	_ = viper.BindPFlag("create-namespace", cmd.Flags().Lookup("create-namespace"))
 
 	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedInterface, "interface", "i", "any", "pod interface to packet capture (optional)")
 	_ = viper.BindEnv("interface", "KUBECTL_PLUGINS_LOCAL_FLAG_INTERFACE")
@@ -384,7 +390,34 @@ func findLocalTcpdumpBinaryPath() (string, error) {
 	return "", errors.Errorf("couldn't find static tcpdump binary on any of: '%v'", tcpdumpLocalBinaryPathLookupList)
 }
 
+func (o Ksniff) setupSignalHandler() chan interface{} {
+	signals := make(chan os.Signal, 1)
+	exit := make(chan interface{})
+
+	signal.Notify(signals, syscall.SIGINT) // TODO; Maybe add SIGTERM as this is used in Kubernetes to evict Pods...
+	go func() {
+	SIGNAL_LOOP:
+		for {
+			select {
+			case sig := <-signals:			
+				if sig == syscall.SIGINT {
+					// Clean up all Sniffers
+					for _, snifferService := range o.snifferServices {
+						err := snifferService.Cleanup()
+						log.Errorf("Unable to clean up sniffers. This will require removing the Pods manually. %v", err)
+					}	
+					break SIGNAL_LOOP
+				}
+			case <-exit:
+				return
+			}
+		}
+	}()
+	return exit
+}
+
 func (o *Ksniff) Run() error {
+
 	log.Infof("sniffing on pod: '%s' [namespace: '%s', container: '%s', filter: '%s', interface: '%s']",
 		o.settings.UserSpecifiedPodName, o.resultingContext.Namespace, o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedFilter, o.settings.UserSpecifiedInterface)
 
@@ -396,8 +429,12 @@ func (o *Ksniff) Run() error {
 			return err
 		}
 	}
+	// Ensure sniffer is clean on interrupt
+	closeHandler := o.setupSignalHandler()
 
+	// Ensure sniffer is clean on complete
 	defer func() {
+		closeHandler <- true
 		log.Info("starting sniffer cleanup")
 
 		var errList []error
