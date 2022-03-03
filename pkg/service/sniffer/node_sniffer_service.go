@@ -46,6 +46,10 @@ func NewNodeSnifferService(options *config.KsniffSettings, service kube.Kubernet
 	return nodeSnifferService
 }
 
+func (nss *NodeSnifferService) TargetName() string {
+	return nss.NodeName
+}
+
 func (nss *NodeSnifferService) Setup() error {
 	var err error
 	// TODO Create a Nodesniffer Object

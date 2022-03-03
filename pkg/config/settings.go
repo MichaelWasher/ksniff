@@ -19,7 +19,7 @@ type KsniffSettings struct {
 	UserSpecifiedVerboseMode       bool
 	UserSpecifiedPrivilegedMode    bool
 	UserSpecifiedNodeMode          bool
-	UserSpecifiedNodeName 		string
+	UserSpecifiedNodeName          string
 	UserSpecifiedImage             string
 	DetectedPodNodeName            string
 	DetectedContainerId            string
@@ -35,6 +35,7 @@ type KsniffSettings struct {
 
 type PrivilegedSnifferServiceConfig struct {
 	DetectedContainerId           string
+	TargetPod                     string
 	DetectedContainerRuntime      string
 	Image                         string
 	TCPDumpImage                  string
@@ -58,7 +59,7 @@ type NodeSnifferServiceConfig struct {
 	Image                         string
 	UserSpecifiedInterface        string
 	UserSpecifiedFilter           string
-	NodeName			string
+	NodeName                      string
 	UserSpecifiedPodCreateTimeout time.Duration
 }
 

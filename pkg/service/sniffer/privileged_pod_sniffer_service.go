@@ -24,6 +24,9 @@ type PrivilegedPodSnifferService struct {
 	runtimeBridge           runtime.ContainerRuntimeBridge
 }
 
+func (p *PrivilegedPodSnifferService) TargetName() string {
+	return p.TargetPod
+}
 
 func NewPrivilegedPodRemoteSniffingService(knsiffSettings *config.KsniffSettings, pod *corev1.Pod, service kube.KubernetesApiService) (SnifferService, error) {
 	runtimeStr, containerID, err := getPodContainerRuntimeDetails(pod)
@@ -41,6 +44,7 @@ func NewPrivilegedPodRemoteSniffingService(knsiffSettings *config.KsniffSettings
 		PrivilegedSnifferServiceConfig: &config.PrivilegedSnifferServiceConfig{
 			DetectedContainerId:           containerID,
 			DetectedContainerRuntime:      runtimeStr,
+			TargetPod:                     pod.Name,
 			Image:                         knsiffSettings.Image,
 			TCPDumpImage:                  knsiffSettings.TCPDumpImage,
 			SocketPath:                    knsiffSettings.SocketPath,
@@ -62,7 +66,6 @@ func NewPrivilegedPodRemoteSniffingService(knsiffSettings *config.KsniffSettings
 	if knsiffSettings.UseDefaultSocketPath {
 		snifferService.SocketPath = snifferService.runtimeBridge.GetDefaultSocketPath()
 	}
-	
 
 	return snifferService, nil
 

@@ -16,19 +16,22 @@ type StaticTcpdumpSnifferService struct {
 
 func NewUploadTcpdumpRemoteSniffingService(options *config.KsniffSettings, service kube.KubernetesApiService) SnifferService {
 
-	
 	staticSniffer := &StaticTcpdumpSnifferService{
 		StaticTCPSnifferServiceConfig: &config.StaticTCPSnifferServiceConfig{
-			UserSpecifiedLocalTcpdumpPath: options.UserSpecifiedLocalTcpdumpPath, 
-			UserSpecifiedRemoteTcpdumpPath: options.UserSpecifiedRemoteTcpdumpPath ,
-			UserSpecifiedPodName:           options.UserSpecifiedPodName ,
-			UserSpecifiedContainer:         options.UserSpecifiedContainer ,
-			UserSpecifiedInterface:        options.UserSpecifiedInterface ,
-			UserSpecifiedFilter:            options.UserSpecifiedFilter ,
-		}, 
+			UserSpecifiedLocalTcpdumpPath:  options.UserSpecifiedLocalTcpdumpPath,
+			UserSpecifiedRemoteTcpdumpPath: options.UserSpecifiedRemoteTcpdumpPath,
+			UserSpecifiedPodName:           options.UserSpecifiedPodName,
+			UserSpecifiedContainer:         options.UserSpecifiedContainer,
+			UserSpecifiedInterface:         options.UserSpecifiedInterface,
+			UserSpecifiedFilter:            options.UserSpecifiedFilter,
+		},
 		kubernetesApiService: service}
-	
+
 	return staticSniffer
+}
+
+func (u *StaticTcpdumpSnifferService) TargetName() string {
+	return u.UserSpecifiedPodName
 }
 
 func (u *StaticTcpdumpSnifferService) Setup() error {

@@ -1,0 +1,4 @@
+.vscode/
+kubectl-sniff
+kubectl-sniff-darwin
+collect

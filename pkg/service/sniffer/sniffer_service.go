@@ -14,4 +14,6 @@ type SnifferService interface {
 	// Start remote sniffing
 	// write remote capture output to the given io writer.
 	Start(stdOut io.Writer) error
+
+	TargetName() string
 }

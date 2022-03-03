@@ -121,7 +121,7 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 	_ = viper.BindEnv("verbose", "KUBECTL_PLUGINS_LOCAL_FLAG_VERBOSE")
 	_ = viper.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
 
-	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedPrivilegedMode, "privileged", "p", false,
+	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedPrivilegedMode, "privileged", "p", true,
 		"if specified, ksniff will deploy another pod that have privileges to attach target pod network namespace")
 	_ = viper.BindEnv("privileged", "KUBECTL_PLUGINS_LOCAL_FLAG_PRIVILEGED")
 	_ = viper.BindPFlag("privileged", cmd.Flags().Lookup("privileged"))
@@ -430,15 +430,15 @@ func (o *Ksniff) Run() error {
 		var fileWriter io.Writer
 		var fileWriters []io.Writer
 		if len(o.snifferServices) > 1 {
-			err = os.Mkdir("pcapcollection", 0775)
+			err = os.Mkdir(o.settings.UserSpecifiedOutputFile, 0775)
 			if err != nil {
 				log.Infof("Unable to create directory for the pcap collection. %v", err)
 				return err
 			}
 
-			for index, _ := range o.snifferServices {
+			for _, sniffer := range o.snifferServices {
 				// TODO Base this from the sniffer pod name
-				fileWriter, err = os.Create(fmt.Sprintf("pcapcollection/sniffer-%d.pcap", index))
+				fileWriter, err = os.Create(fmt.Sprintf("%s%c%s.pcap", o.settings.UserSpecifiedOutputFile, os.PathSeparator, sniffer.TargetName()))
 				if err != nil {
 					log.Infof("Unable to create directory for the pcap collection. %v", err)
 					return err
@@ -608,7 +608,7 @@ func (o *Ksniff) parseResourceTypes(cmd *cobra.Command, args []string) ([]corev1
 
 	/// Build the list of Nodes and Pods to select from; With
 	log.Infof("Pod List: '%v', nodeList '%v'", podList, nodeList)
-	return podList, nodeList, nil
+	return podList, nodeList, err
 }
 
 func getPodsForLabel(labelSet *labels.Set, namespace string, clientSet *kubernetes.Clientset) (*corev1.PodList, error) {
