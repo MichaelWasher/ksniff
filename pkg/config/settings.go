@@ -31,6 +31,8 @@ type KsniffSettings struct {
 	UserSpecifiedKubeContext       string
 	SocketPath                     string
 	UseDefaultSocketPath           bool
+	UserSpecifiedCreateNamespace   bool
+	CreatedNamespace               string
 }
 
 type PrivilegedSnifferServiceConfig struct {
@@ -44,6 +46,7 @@ type PrivilegedSnifferServiceConfig struct {
 	UserSpecifiedInterface        string
 	UserSpecifiedFilter           string
 	UserSpecifiedPodCreateTimeout time.Duration
+	CreatedNamespace              string
 }
 
 type StaticTCPSnifferServiceConfig struct {

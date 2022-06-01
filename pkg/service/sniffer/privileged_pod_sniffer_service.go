@@ -52,8 +52,10 @@ func NewPrivilegedPodRemoteSniffingService(knsiffSettings *config.KsniffSettings
 			UserSpecifiedInterface:        knsiffSettings.UserSpecifiedInterface,
 			UserSpecifiedFilter:           knsiffSettings.UserSpecifiedFilter,
 			UserSpecifiedPodCreateTimeout: knsiffSettings.UserSpecifiedPodCreateTimeout,
+			CreatedNamespace:              knsiffSettings.CreatedNamespace,
 		},
 	}
+
 	// Overwrite with defaults if not specified
 	if knsiffSettings.UseDefaultImage {
 		snifferService.Image = snifferService.runtimeBridge.GetDefaultImage()
@@ -82,6 +84,7 @@ func (p *PrivilegedPodSnifferService) Setup() error {
 		Image:         p.Image,
 		SocketPath:    p.SocketPath,
 		Timeout:       p.UserSpecifiedPodCreateTimeout,
+		Namespace:     p.CreatedNamespace,
 	}
 
 	p.privilegedPod, err = p.kubernetesApiService.CreatePrivilegedPod(&podConfig)
@@ -112,19 +115,7 @@ func (p *PrivilegedPodSnifferService) Setup() error {
 func (p *PrivilegedPodSnifferService) Cleanup() error {
 	log.Infof("removing privileged container: '%s'", p.privilegedContainerName)
 
-	command := p.runtimeBridge.BuildCleanupCommand()
-
-	exitCode, err := p.kubernetesApiService.ExecuteCommand(p.privilegedPod.Name, p.privilegedContainerName, command, &kube.NopWriter{})
-	if err != nil {
-		log.WithError(err).Errorf("failed to remove privileged container: '%s', exit code: '%d', "+
-			"please manually remove it", p.privilegedContainerName, exitCode)
-	} else {
-		log.Infof("privileged container: '%s' removed successfully", p.privilegedContainerName)
-	}
-
-	log.Infof("removing pod: '%s'", p.privilegedPod.Name)
-
-	err = p.kubernetesApiService.DeletePod(p.privilegedPod.Name)
+	err := p.kubernetesApiService.DeletePod(p.privilegedPod.Name)
 	if err != nil {
 		log.WithError(err).Errorf("failed to remove pod: '%s", p.privilegedPod.Name)
 		return err

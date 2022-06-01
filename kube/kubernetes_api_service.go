@@ -23,6 +23,7 @@ type PrivilegedPodConfig struct {
 	ContainerName string
 	Image         string
 	SocketPath    string
+	Namespace     string
 	Timeout       time.Duration
 }
 
@@ -41,9 +42,10 @@ type KubernetesApiService interface {
 }
 
 type KubernetesApiServiceImpl struct {
-	clientset       *kubernetes.Clientset
-	restConfig      *rest.Config
-	targetNamespace string
+	clientset        *kubernetes.Clientset
+	restConfig       *rest.Config
+	targetNamespace  string
+	snifferNamespace string
 }
 
 func NewKubernetesApiService(clientset *kubernetes.Clientset,
@@ -73,14 +75,14 @@ func (k *KubernetesApiServiceImpl) IsSupportedContainerRuntime(nodeName string) 
 
 func (k *KubernetesApiServiceImpl) ExecuteCommand(podName string, containerName string, command []string, stdOut io.Writer) (int, error) {
 
-	log.Infof("executing command: '%s' on container: '%s', pod: '%s', namespace: '%s'", command, containerName, podName, k.targetNamespace)
+	log.Infof("executing command: '%s' on container: '%s', pod: '%s', namespace: '%s'", command, containerName, podName, k.snifferNamespace)
 	stdErr := new(Writer)
 
 	executeTcpdumpRequest := ExecCommandRequest{
 		KubeRequest: KubeRequest{
 			Clientset:  k.clientset,
 			RestConfig: k.restConfig,
-			Namespace:  k.targetNamespace,
+			Namespace:  k.snifferNamespace,
 			Pod:        podName,
 			Container:  containerName,
 		},
@@ -109,7 +111,7 @@ func (k *KubernetesApiServiceImpl) DeletePod(podName string) error {
 
 	var gracePeriodTime int64 = 0
 
-	err := k.clientset.CoreV1().Pods(k.targetNamespace).Delete(context.TODO(), podName, v1.DeleteOptions{
+	err := k.clientset.CoreV1().Pods(k.snifferNamespace).Delete(context.TODO(), podName, v1.DeleteOptions{
 		GracePeriodSeconds: &gracePeriodTime,
 	})
 
@@ -121,6 +123,11 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(config *PrivilegedPodConf
 	log.Debugf("creating privileged pod with the following options: { %v }", config)
 
 	hostNetwork := true
+	k.snifferNamespace = k.targetNamespace
+
+	if config.Namespace != "" {
+		k.snifferNamespace = config.Namespace
+	}
 
 	isSupported, err := k.IsSupportedContainerRuntime(config.NodeName)
 	if err != nil {
@@ -138,7 +145,7 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(config *PrivilegedPodConf
 
 	objectMetadata := v1.ObjectMeta{
 		GenerateName: "ksniff-",
-		Namespace:    k.targetNamespace,
+		Namespace:    k.snifferNamespace,
 		Labels: map[string]string{
 			"app": "ksniff",
 		},
@@ -184,7 +191,7 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(config *PrivilegedPodConf
 			},
 		})
 	}
-	
+
 	// Create Privileged container
 	privileged := true
 	privilegedContainer := corev1.Container{
@@ -214,7 +221,7 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(config *PrivilegedPodConf
 		Spec:       podSpecs,
 	}
 
-	createdPod, err := k.clientset.CoreV1().Pods(k.targetNamespace).Create(context.TODO(), &pod, v1.CreateOptions{})
+	createdPod, err := k.clientset.CoreV1().Pods(k.snifferNamespace).Create(context.TODO(), &pod, v1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +230,7 @@ func (k *KubernetesApiServiceImpl) CreatePrivilegedPod(config *PrivilegedPodConf
 	log.Debugf("created pod details: %v", createdPod)
 
 	verifyPodState := func() bool {
-		podStatus, err := k.clientset.CoreV1().Pods(k.targetNamespace).Get(context.TODO(), createdPod.Name, v1.GetOptions{})
+		podStatus, err := k.clientset.CoreV1().Pods(k.snifferNamespace).Get(context.TODO(), createdPod.Name, v1.GetOptions{})
 		if err != nil {
 			return false
 		}
@@ -287,7 +294,7 @@ func (k *KubernetesApiServiceImpl) UploadFile(localPath string, remotePath strin
 		KubeRequest: KubeRequest{
 			Clientset:  k.clientset,
 			RestConfig: k.restConfig,
-			Namespace:  k.targetNamespace,
+			Namespace:  k.snifferNamespace,
 			Pod:        podName,
 			Container:  containerName,
 		},

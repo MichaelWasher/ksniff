@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -47,15 +48,16 @@ const tcpdumpRemotePath = "/tmp/static-tcpdump"
 var tcpdumpLocalBinaryPathLookupList []string
 
 type Ksniff struct {
-	configFlags      *genericclioptions.ConfigFlags
-	resultingContext *api.Context
-	clientset        *kubernetes.Clientset
-	restConfig       *rest.Config
-	rawConfig        api.Config
-	settings         *config.KsniffSettings
-	snifferServices  []sniffer.SnifferService
-	pods             []corev1.Pod
-	nodes            []corev1.Node
+	configFlags              *genericclioptions.ConfigFlags
+	resultingContext         *api.Context
+	clientset                *kubernetes.Clientset
+	restConfig               *rest.Config
+	rawConfig                api.Config
+	settings                 *config.KsniffSettings
+	snifferServices          []sniffer.SnifferService
+	pods                     []corev1.Pod
+	nodes                    []corev1.Node
+	namespaceCleanupFunction func()
 }
 
 func NewKsniff(settings *config.KsniffSettings) *Ksniff {
@@ -91,7 +93,7 @@ func NewCmdSniff(streams genericclioptions.IOStreams) *cobra.Command {
 	_ = viper.BindEnv("namespace", "KUBECTL_PLUGINS_CURRENT_NAMESPACE")
 	_ = viper.BindPFlag("namespace", cmd.Flags().Lookup("namespace"))
 
-	cmd.Flags().StringVarP(&ksniffSettings.UserSpecifiedNamespace, "create-namespace", "", "", "create-namespace (optional)")
+	cmd.Flags().BoolVarP(&ksniffSettings.UserSpecifiedCreateNamespace, "create-namespace", "", false, "create-namespace (optional)")
 	_ = viper.BindEnv("create-namespace", "KUBECTL_PLUGINS_CREATE_NAMESPACE")
 	_ = viper.BindPFlag("create-namespace", cmd.Flags().Lookup("create-namespace"))
 
@@ -177,6 +179,7 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 	o.settings.UserSpecifiedInterface = viper.GetString("interface")
 	o.settings.UserSpecifiedFilter = viper.GetString("filter")
 	o.settings.UserSpecifiedOutputFile = viper.GetString("output-file")
+	o.settings.UserSpecifiedCreateNamespace = viper.GetBool("create-namespace")
 	o.settings.UserSpecifiedLocalTcpdumpPath = viper.GetString("local-tcpdump-path")
 	o.settings.UserSpecifiedRemoteTcpdumpPath = viper.GetString("remote-tcpdump-path")
 	o.settings.UserSpecifiedVerboseMode = viper.GetBool("verbose")
@@ -246,6 +249,21 @@ func (o *Ksniff) Complete(cmd *cobra.Command, args []string) error {
 
 	o.pods = podList
 	o.nodes = nodeList
+
+	// Create a temp namespace
+	if o.settings.UserSpecifiedCreateNamespace {
+		createdNamespace, namespaceCleanupFunction, err := o.createTempNamespace()
+
+		o.namespaceCleanupFunction = namespaceCleanupFunction
+
+		if err != nil {
+			return err
+		}
+
+		o.settings.CreatedNamespace = createdNamespace.GetName()
+		log.Infof("Created namespace %q", o.settings.CreatedNamespace)
+
+	}
 
 	return nil
 }
@@ -396,17 +414,14 @@ func (o Ksniff) setupSignalHandler() chan interface{} {
 
 	signal.Notify(signals, syscall.SIGINT) // TODO; Maybe add SIGTERM as this is used in Kubernetes to evict Pods...
 	go func() {
-	SIGNAL_LOOP:
 		for {
 			select {
-			case sig := <-signals:			
+			case sig := <-signals:
 				if sig == syscall.SIGINT {
 					// Clean up all Sniffers
-					for _, snifferService := range o.snifferServices {
-						err := snifferService.Cleanup()
-						log.Errorf("Unable to clean up sniffers. This will require removing the Pods manually. %v", err)
-					}	
-					break SIGNAL_LOOP
+					o.namespaceCleanupFunction()
+					log.Info("Closing...")
+					os.Exit(0)
 				}
 			case <-exit:
 				return
@@ -421,16 +436,25 @@ func (o *Ksniff) Run() error {
 	log.Infof("sniffing on pod: '%s' [namespace: '%s', container: '%s', filter: '%s', interface: '%s']",
 		o.settings.UserSpecifiedPodName, o.resultingContext.Namespace, o.settings.UserSpecifiedContainer, o.settings.UserSpecifiedFilter, o.settings.UserSpecifiedInterface)
 
+	// Clean up the Namespace created
+	defer o.namespaceCleanupFunction()
+	closeHandler := o.setupSignalHandler()
+	var wg sync.WaitGroup
+
 	for _, snifferService := range o.snifferServices {
 		// TODO Run asynchronously to speed up the process and then wait on waitgroup
-		err := snifferService.Setup()
-
-		if err != nil {
-			return err
-		}
+		wg.Add(1)
+		go func(snifferService sniffer.SnifferService) {
+			err := snifferService.Setup()
+			if err != nil {
+				log.WithError(err).Error("Unable to bootstrap sniffer service. Exiting...")
+				o.namespaceCleanupFunction()
+				os.Exit(1)
+			}
+			wg.Done()
+		}(snifferService)
 	}
-	// Ensure sniffer is clean on interrupt
-	closeHandler := o.setupSignalHandler()
+	wg.Wait()
 
 	// Ensure sniffer is clean on complete
 	defer func() {
@@ -466,6 +490,8 @@ func (o *Ksniff) Run() error {
 		var err error
 		var fileWriter io.Writer
 		var fileWriters []io.Writer
+		var wg sync.WaitGroup
+
 		if len(o.snifferServices) > 1 {
 			err = os.Mkdir(o.settings.UserSpecifiedOutputFile, 0775)
 			if err != nil {
@@ -493,12 +519,18 @@ func (o *Ksniff) Run() error {
 		}
 
 		for id, snifferService := range o.snifferServices {
-			//TODO  Double check this works with multiple fileWriters.
-			err := snifferService.Start(fileWriters[id])
-			if err != nil {
-				errList = append(errList, err)
-			}
+			wg.Add(1)
+
+			go func(snifferService sniffer.SnifferService, id int) {
+				err := snifferService.Start(fileWriters[id])
+				if err != nil {
+					errList = append(errList, err)
+				}
+				wg.Done()
+			}(snifferService, id)
+
 		}
+		wg.Wait()
 
 		if len(errList) != 0 {
 			for _, err := range errList {
@@ -661,4 +693,33 @@ func getPodsForLabel(labelSet *labels.Set, namespace string, clientSet *kubernet
 	log.Infof("Finished collecting Pods for Labelset %v", *labelSet)
 	log.Infof("Pods found: [ %v ]", pods)
 	return pods, err
+}
+
+func (o *Ksniff) createTempNamespace() (*corev1.Namespace, func(), error) {
+	ns, err := o.clientset.CoreV1().Namespaces().Create(context.TODO(), newNamespace(), metav1.CreateOptions{})
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating temp namespace: %w", err)
+	}
+
+	cleanup := func() {
+		log.Infof("Removing Namespace %q", ns.Name)
+		if err := o.clientset.CoreV1().Namespaces().Delete(context.TODO(), ns.Name, metav1.DeleteOptions{}); err != nil {
+			log.Errorf("%v\n", err)
+		}
+		log.Infof("Namespace %q removed", ns.Name)
+	}
+
+	return ns, cleanup, nil
+}
+
+func newNamespace() *corev1.Namespace {
+	return &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "mwasher-ksniff-",
+			Labels: map[string]string{
+				"ksniff": "",
+			},
+		},
+	}
 }
